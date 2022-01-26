@@ -1,4 +1,4 @@
-flask
+flask==2.0.2
 certifi==2020.6.20
 chardet==3.0.4
 click==7.1.2

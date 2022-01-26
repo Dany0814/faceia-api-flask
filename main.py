@@ -1,104 +1,137 @@
-import face_recognition
+from flask import Flask, render_template, Response
 import cv2
+import face_recognition
 import numpy as np
+import boto3
+import os
+from datetime import datetime
+from urllib import request
 
-# This is a demo of running face recognition on live video from your webcam. It's a little more complicated than the
-# other example, but it includes some basic performance tweaks to make things run a lot faster:
-#   1. Process each video frame at 1/4 resolution (though still display it at full resolution)
-#   2. Only detect faces in every other frame of video.
+app=Flask(__name__)
 
-# PLEASE NOTE: This example requires OpenCV (the `cv2` library) to be installed only to read from your webcam.
-# OpenCV is *not* required to use the face_recognition library. It's only required if you want to run this
-# specific demo. If you have trouble installing it, try any of the other demos that don't require it instead.
+# Archivo de prueba local de reconocimiento facial
+# Credenciales de Amazon
+# Requisitos: Tener un bucket disponible, en este caso el bucket es "unida"
 
-# Get a reference to webcam #0 (the default one)
-video_capture = cv2.VideoCapture(0)
+ACCESS_KEY = "AKIA25L3WLNND5PE2XQI"
+SECRET_KEY = "wEoXaBGe6e+k6WlwVUdz72iR8O/GP4F+az+7yP+l"
 
-# Load a sample picture and learn how to recognize it.
-krish_image = face_recognition.load_image_file("Krish/krish.jpg")
-krish_face_encoding = face_recognition.face_encodings(krish_image)[0]
+# Cliente s3 y listado de objetos del bucket
 
-# Load a second sample picture and learn how to recognize it.
-bradley_image = face_recognition.load_image_file("Bradley/bradley.jpg")
-bradley_face_encoding = face_recognition.face_encodings(bradley_image)[0]
+client = boto3.client(
+    "s3",
+    aws_access_key_id=ACCESS_KEY,
+    aws_secret_access_key=SECRET_KEY,
+)
 
-# Create arrays of known face encodings and their names
-known_face_encodings = [
-    krish_face_encoding,
-    bradley_face_encoding
-]
-known_face_names = [
-    "Krish",
-    "Bradley"
-]
+response = client.list_objects_v2(Bucket="unida")
+lista = response["Contents"]
 
-# Initialize some variables
-face_locations = []
-face_encodings = []
-face_names = []
-process_this_frame = True
+# Obtener solo el "key" de los objects del bucket seleccionado y descargarlo en una ruta local ./img
 
-while True:
-    # Grab a single frame of video
-    ret, frame = video_capture.read()
+for fichero in lista:
+    classNames2 = fichero["Key"]
+    # print(f"classNames2 :{classNames2} \n")
+    client.download_file('unida', f'{classNames2}', f'./img/{classNames2}') 
 
-    # Resize frame of video to 1/4 size for faster face recognition processing
-    small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+# Listar los objetos descargados y obtener un array de cada objeto además de su nombre
 
-    # Convert the image from BGR color (which OpenCV uses) to RGB color (which face_recognition uses)
-    rgb_small_frame = small_frame[:, :, ::-1]
-
-    # Only process every other frame of video to save time
-    if process_this_frame:
-        # Find all the faces and face encodings in the current frame of video
-        face_locations = face_recognition.face_locations(rgb_small_frame)
-        face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
-
-        face_names = []
-        for face_encoding in face_encodings:
-            # See if the face is a match for the known face(s)
-            matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
-            name = "Unknown"
-
-            # # If a match was found in known_face_encodings, just use the first one.
-            # if True in matches:
-            #     first_match_index = matches.index(True)
-            #     name = known_face_names[first_match_index]
-
-            # Or instead, use the known face with the smallest distance to the new face
-            face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
-            best_match_index = np.argmin(face_distances)
-            if matches[best_match_index]:
-                name = known_face_names[best_match_index]
-
-            face_names.append(name)
-
-    process_this_frame = not process_this_frame
+path = './img'
+images = []
+classNames = []
+myList = os.listdir(path)
+print(myList)
+for cl in myList:
+    # print(cl)
+    curImg = cv2.imread(f'{path}/{cl}')
+    # print(curImg)
+    images.append(curImg)
+    classNames.append(os.path.splitext(cl)[0])
+# print(classNames)
 
 
-    # Display the results
-    for (top, right, bottom, left), name in zip(face_locations, face_names):
-        # Scale back up face locations since the frame we detected in was scaled to 1/4 size
-        top *= 4
-        right *= 4
-        bottom *= 4
-        left *= 4
+def findEncodings(images):
+    encodeList = []
+    for img in images:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # print(f"img: {img} \n")
+        encode = face_recognition.face_encodings(img)[0]
+        encodeList.append(encode)
+        # print(encodeList)
+    return encodeList
 
-        # Draw a box around the face
-        cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 255), 2)
 
-        # Draw a label with a name below the face
-        cv2.rectangle(frame, (left, bottom - 35), (right, bottom), (0, 0, 255), cv2.FILLED)
-        font = cv2.FONT_HERSHEY_DUPLEX
-        cv2.putText(frame, name, (left + 6, bottom - 6), font, 1.0, (255, 255, 255), 1)
 
-    # Display the resulting image
-    cv2.imshow('Video', frame)
+def markAttendance(name):
+    with open('./Attendance.csv', 'r+') as f:
+        myDataList = f.readlines()
+        nameList = []
+        for line in myDataList:
+            entry = line.split(',')
+            nameList.append(entry[0])
+        if name not in nameList:
+            now = datetime.now()
+            dtString = now.strftime('%H:%M:%S')
+            f.writelines(f'\n{name}, {dtString}')
 
-    # Hit 'q' on the keyboard to quit!
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+encodeListKnown = findEncodings(images)
+print('Encoding Complete')
 
-# Release handle to the webcam
-video_capture.release()
-cv2.destroyAllWindows()
+
+def gen_frames():
+    cap = cv2.VideoCapture(0)
+    while True:
+        success, img = cap.read()
+        imgS = cv2.resize(img, (0, 0), fx=0.25, fy=0.25)
+        imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
+
+
+        facesCurFrame = face_recognition.face_locations(imgS)
+        encodeCurFrame = face_recognition.face_encodings(imgS, facesCurFrame)
+
+        for encodeFace, faceLoc in zip(encodeCurFrame, facesCurFrame):
+            matches = face_recognition.compare_faces(encodeListKnown, encodeFace)
+            faceDis = face_recognition.face_distance(encodeListKnown, encodeFace)
+            # print(faceDis)
+            matchIndex = np.argmin(faceDis)
+
+            # if matches[matchIndex]:
+            #     name = classNames[matchIndex].upper()
+            #     print(name)
+            #     y1,x2,y2,x1 = faceLoc
+            #     x1,y1,x2,y2 = x1*4, y1*4, x2*4, y2*4
+            #     cv2.rectangle(img, (x1,y1), (x2,y2), (0, 255, 0), 2)
+            #     cv2.rectangle(img, (x1, y2-35), (x2,y2), (0,255,0), cv2.FILLED)
+            #     cv2.putText(img, name, (x1+6, y2-6), cv2.FONT_HERSHEY_COMPLEX, 1, (255,255,255),2)
+            #     markAttendance(name)
+
+            if faceDis[matchIndex] < 0.7:
+                name = classNames[matchIndex].upper()
+                markAttendance(name)
+                y1,x2,y2,x1 = faceLoc
+                x1,y1,x2,y2 = x1*10, y1*10, x2*10, y2*10
+                cv2.rectangle(img, (x1,y1), (x2,y2), (0, 255, 0), 2)
+                cv2.rectangle(img, (x1, y2-35), (x2,y2), (0,255,0), cv2.FILLED)
+                cv2.putText(img, name, (x1+6, y2-6), cv2.FONT_HERSHEY_COMPLEX, 1, (255,255,255),2)
+            else: 
+                name = 'Unknown'
+                y1,x2,y2,x1 = faceLoc
+                x1,y1,x2,y2 = x1*10, y1*10, x2*10, y2*10
+                cv2.rectangle(img, (x1,y1), (x2,y2), (0, 0, 255), 2)
+                cv2.rectangle(img, (x1, y2-35), (x2,y2), (0,0,255), cv2.FILLED)
+                cv2.putText(img, name, (x1+6, y2-6), cv2.FONT_HERSHEY_COMPLEX, 1, (255,255,255),2)
+
+                ret, buffer = cv2.imencode('.jpg', img)
+                img = buffer.tobytes()
+                yield (b'--frame\r\n'b'Content-Type: image/jpeg\r\n\r\n' + img + b'\r\n')
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/video_feed')
+def video_feed():
+    return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+if __name__=='__main__':
+    app.run(debug=True)
